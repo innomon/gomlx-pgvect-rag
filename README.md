@@ -34,16 +34,17 @@ python3 download_weights.py
 ```
 
 ### 3. Build & Run
-To start the MCP server, use the following command (ensuring `CGO_ENABLED=1` for the tokenizer bindings):
+To start the MCP server, use the following command:
 
 ```bash
-CGO_ENABLED=1 go run cmd/mcp-server/main.go -weights ./models/t5gemma-2-270m
+CGO_ENABLED=1 go build -o mcp-server cmd/mcp-server/main.go
+./mcp-server -weights ./models/t5gemma-2-270m
 ```
 
 ## MCP Tools
 The server exposes the following tools to your LLM client:
-- `search_multimodal`: Search for assets using text or image paths.
-- `ingest_asset`: Ingest a local file (image/text) and generate its embedding.
+- `search_multimodal`: Search for relevant text or image assets.
+- `ingest_asset`: Ingest a local file and generate its T5Gemma 2 (Gemma 3 base) embedding.
 
 ## Project Structure
 - `cmd/mcp-server/`: MCP Server entry point and tool definitions.

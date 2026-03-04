@@ -13,12 +13,21 @@ import (
 	"github.com/innomon/gomlx-pgvect-rag/internal/gomlx_utils"
 	"github.com/innomon/gomlx-pgvect-rag/internal/rag"
 	"github.com/innomon/gomlx-pgvect-rag/pkg/utils"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	// Register XLA backend
 	_ "github.com/gomlx/gomlx/backends/xla"
 )
+
+type SearchMultimodalArgs struct {
+	QueryText      string `json:"query_text" jsonschema:"description=Textual query for similarity search."`
+	QueryImagePath string `json:"query_image_path" jsonschema:"description=Local path to an image file for visual similarity search."`
+	Limit          int    `json:"limit" jsonschema:"description=Maximum number of results to return (default: 5),default=5"`
+}
+
+type IngestAssetArgs struct {
+	Path string `json:"path" jsonschema:"description=Local path to the file to ingest."`
+}
 
 func main() {
 	var weightsDir string
@@ -71,57 +80,49 @@ func main() {
 	}
 
 	// 6. Create MCP Server
-	s := server.NewMCPServer(
-		"gomlx-pgvect-rag",
-		"1.0.0",
+	server := mcp.NewServer(
+		&mcp.Implementation{
+			Name:    "gomlx-pgvect-rag",
+			Version: "1.0.0",
+		},
+		&mcp.ServerOptions{},
 	)
 
-	// 7. Register Tools
+	// 7. Register Tools using the top-level generic AddTool
 	// search_multimodal
-	searchTool := mcp.NewTool("search_multimodal",
-		mcp.WithDescription("Search for relevant text or image assets in the multimodal RAG store."),
-		mcp.WithSchema(mcp.NewParams(
-			mcp.NewStringParam("query_text", "Textual query for similarity search."),
-			mcp.NewStringParam("query_image_path", "Local path to an image file for visual similarity search."),
-			mcp.NewIntParam("limit", "Maximum number of results to return (default: 5)."),
-		)),
-	)
-	s.AddTool(searchTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		queryText, _ := request.Params["query_text"].(string)
-		queryImage, _ := request.Params["query_image_path"].(string)
-		limit, ok := request.Params["limit"].(float64)
-		if !ok {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "search_multimodal",
+		Description: "Search for relevant text or image assets in the multimodal RAG store.",
+	}, func(ctx context.Context, request *mcp.CallToolRequest, args SearchMultimodalArgs) (*mcp.CallToolResult, any, error) {
+		limit := args.Limit
+		if limit <= 0 {
 			limit = 5
 		}
 
-		assets, err := orchestrator.Search(ctx, queryText, queryImage, int(limit))
+		assets, err := orchestrator.Search(ctx, args.QueryText, args.QueryImagePath, limit)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Search failed: %v", err)), nil
+			return nil, nil, err
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("Found %d results: %+v", len(assets), assets)), nil
+		return nil, assets, nil
 	})
 
 	// ingest_asset
-	ingestTool := mcp.NewTool("ingest_asset",
-		mcp.WithDescription("Ingest a new file (image or text) into the multimodal RAG store."),
-		mcp.WithSchema(mcp.NewParams(
-			mcp.NewStringParam("path", "Local path to the file to ingest."),
-		)),
-	)
-	s.AddTool(ingestTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		path, _ := request.Params["path"].(string)
-		err := orchestrator.Ingest(ctx, path, map[string]interface{}{"source": "mcp-tool"})
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "ingest_asset",
+		Description: "Ingest a new file (image or text) into the multimodal RAG store.",
+	}, func(ctx context.Context, request *mcp.CallToolRequest, args IngestAssetArgs) (*mcp.CallToolResult, any, error) {
+		err := orchestrator.Ingest(ctx, args.Path, map[string]interface{}{"source": "mcp-tool"})
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Ingestion failed: %v", err)), nil
+			return nil, nil, err
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("Successfully ingested: %s", path)), nil
+		return nil, fmt.Sprintf("Successfully ingested: %s", args.Path), nil
 	})
 
 	// 8. Start the MCP Server (stdio)
 	fmt.Fprintf(os.Stderr, "🚀 gomlx-pgvect-rag MCP Server running on %s\n", backend.Name())
-	if err := server.ServeStdio(s); err != nil {
+	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("MCP server error: %v", err)
 	}
 }

@@ -3,17 +3,18 @@ package utils
 import (
 	"fmt"
 
-	"github.com/daulet/tokenizers"
+	"github.com/sugarme/tokenizer"
+	"github.com/sugarme/tokenizer/pretrained"
 )
 
-// Tokenizer wraps the daulet/tokenizers.Tokenizer for easier use.
+// Tokenizer wraps the sugarme/tokenizer.Tokenizer for easier use.
 type Tokenizer struct {
-	tk *tokenizers.Tokenizer
+	tk *tokenizer.Tokenizer
 }
 
 // NewTokenizer loads a tokenizer from a tokenizer.json file.
 func NewTokenizer(path string) (*Tokenizer, error) {
-	tk, err := tokenizers.FromFile(path)
+	tk, err := pretrained.FromFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load tokenizer from %s: %w", path, err)
 	}
@@ -22,17 +23,19 @@ func NewTokenizer(path string) (*Tokenizer, error) {
 
 // Encode converts text into token IDs.
 func (t *Tokenizer) Encode(text string, addSpecialTokens bool) ([]uint32, error) {
-	encoding, err := t.tk.Encode(text, addSpecialTokens)
+	// sugarme/tokenizer uses a slightly different API
+	en, err := t.tk.EncodeSingle(text, addSpecialTokens)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode text: %w", err)
 	}
-	// encoding.IDs returns []uint32
-	return encoding.IDs, nil
+	
+	// Convert []int to []uint32
+	ids := make([]uint32, len(en.Ids))
+	for i, id := range en.Ids {
+		ids[i] = uint32(id)
+	}
+	return ids, nil
 }
 
-// Close releases the underlying tokenizer resources (important if using CGO).
-func (t *Tokenizer) Close() {
-	if t.tk != nil {
-		t.tk.Close()
-	}
-}
+// Close is a no-op for pure Go tokenizer.
+func (t *Tokenizer) Close() {}

@@ -2,6 +2,7 @@ package embedder
 
 import (
 	. "github.com/gomlx/gomlx/pkg/core/graph"
+	"github.com/gomlx/gomlx/pkg/core/dtypes"
 	"github.com/gomlx/gomlx/pkg/ml/context"
 	"github.com/gomlx/gomlx/pkg/ml/layers"
 )
@@ -19,8 +20,9 @@ func EmbedMultimodalGraph(ctx *context.Context, textIds, imagePixels *Node) *Nod
 	visualTokens = layers.Dense(ctx, visualTokens, true, 640)
 
 	// 4. Text Embedding
+	// Updated signature: (ctx, input, dtype, vocabSize, embeddingDim)
 	ctx = ctx.In("text_embedding")
-	textTokens := layers.Embedding(ctx, textIds, 262144, 640)
+	textTokens := layers.Embedding(ctx, textIds, dtypes.Float32, 262144, 640)
 
 	// 5. Concatenate Tokens
 	combinedTokens := Concatenate([]*Node{visualTokens, textTokens}, 1)

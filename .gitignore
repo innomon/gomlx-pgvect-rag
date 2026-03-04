@@ -3,6 +3,7 @@ models/
 
 # Binaries
 bin/
+/mcp-server
 *.exe
 *.exe~
 *.dll

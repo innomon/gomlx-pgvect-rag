@@ -10,6 +10,7 @@ import (
 	"github.com/gomlx/gomlx/backends"
 	_ "github.com/gomlx/gomlx/backends/xla"
 	"github.com/gomlx/gomlx/pkg/core/graph"
+	"github.com/gomlx/gomlx/pkg/core/shapes"
 	"github.com/gomlx/gomlx/pkg/core/tensors"
 	"github.com/gomlx/gomlx/pkg/ml/context"
 	"github.com/nlpodyssey/safetensors"
@@ -46,7 +47,7 @@ func NewModel(backend backends.Backend) *Model {
 
 // CompileEmbed compiles the multimodal embedding graph for inference.
 func (m *Model) CompileEmbed(buildFn func(ctx *context.Context, textIds, imagePixels *graph.Node) *graph.Node) {
-	m.ExecEmbed = graph.NewExec(m.Backend, func(textIds, imagePixels *graph.Node) *graph.Node {
+	m.ExecEmbed = graph.MustNewExec(m.Backend, func(textIds, imagePixels *graph.Node) *graph.Node {
 		return buildFn(m.Context, textIds, imagePixels)
 	})
 }
@@ -57,18 +58,27 @@ func (m *Model) Embed(textIds []uint32, imageTensor *tensors.Tensor) ([]float32,
 		return nil, fmt.Errorf("embedding graph not compiled")
 	}
 
-	// 1. Create Text ID tensor: [batch=1, seq_len]
 	textT := tensors.FromFlatDataAndDimensions(textIds, 1, len(textIds))
 
-	// 2. Run inference
-	results := m.ExecEmbed.Call(textT, imageTensor)
+	results := m.ExecEmbed.MustExec(textT, imageTensor)
 	if len(results) == 0 {
 		return nil, fmt.Errorf("no output from graph execution")
 	}
 
-	// 3. Convert output tensor to []float32
 	outT := results[0]
-	return outT.FlatData().([]float32), nil
+	// Using Value() to get the actual underlying slice (copy)
+	data := outT.Value()
+	// tensors.Value() returns []T or [][]T etc. for rank > 0.
+	// For Rank 2 [1, 640], it returns [][]float32.
+	// We want flat float32.
+	switch v := data.(type) {
+	case [][]float32:
+		return v[0], nil
+	case []float32:
+		return v, nil
+	default:
+		return nil, fmt.Errorf("unexpected tensor output type: %T", data)
+	}
 }
 
 // LoadSafetensors loads one or more .safetensors files into the model's context.
@@ -84,35 +94,42 @@ func (m *Model) LoadSafetensors(weightsDir string) error {
 
 	for _, file := range files {
 		fmt.Printf("📦 Loading weights from %s...\n", filepath.Base(file))
-		st, err := safetensors.Open(file)
+		
+		data, err := os.ReadFile(file)
 		if err != nil {
-			return fmt.Errorf("failed to open safetensors file %s: %w", file, err)
+			return fmt.Errorf("failed to read safetensors file %s: %w", file, err)
+		}
+
+		st, err := safetensors.Deserialize(data)
+		if err != nil {
+			return fmt.Errorf("failed to deserialize safetensors from %s: %w", file, err)
 		}
 
 		for _, name := range st.Names() {
-			t, err := st.Tensor(name)
-			if err != nil {
-				return fmt.Errorf("failed to read tensor %s: %w", name, err)
+			t, ok := st.Tensor(name)
+			if !ok {
+				continue
 			}
 
 			gomlxScope := mapHuggingFaceToGoMLX(name)
-			data := t.Data()
+			
 			shape := make([]int, len(t.Shape()))
 			for i, s := range t.Shape() {
 				shape[i] = int(s)
 			}
 
 			var goMLXTensor *tensors.Tensor
-			switch t.Dtype() {
-			case safetensors.Float32:
-				floatData := *(*[]float32)(unsafe.Pointer(&data))
-				floatData = floatData[:len(data)/4]
+			switch t.DType() {
+			case safetensors.F32:
+				tData := t.Data()
+				floatData := *(*[]float32)(unsafe.Pointer(&tData))
+				floatData = floatData[:len(tData)/4]
 				goMLXTensor = tensors.FromFlatDataAndDimensions(floatData, shape...)
 			default:
 				continue
 			}
 
-			m.Context.In(gomlxScope).SetVariableValue(goMLXTensor)
+			m.Context.In(gomlxScope).VariableWithShape("weight", shapes.Make(goMLXTensor.DType(), shape...)).MustSetValue(goMLXTensor)
 		}
 	}
 
