@@ -46,7 +46,7 @@ python3 download_weights.py
 
 ### 3. Build the Server
 ```bash
-CGO_ENABLED=1 go build -o mcp-server cmd/mcp-server/main.go
+go build -o mcp-server cmd/mcp-server/main.go
 ```
 
 ## 🛠️ Usage with MCP Clients
