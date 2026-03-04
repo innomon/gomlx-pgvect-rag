@@ -93,7 +93,7 @@ func (m *Model) LoadSafetensors(weightsDir string) error {
 	}
 
 	for _, file := range files {
-		fmt.Printf("📦 Loading weights from %s...\n", filepath.Base(file))
+		fmt.Fprintf(os.Stderr, "📦 Loading weights from %s...\n", filepath.Base(file))
 		
 		data, err := os.ReadFile(file)
 		if err != nil {

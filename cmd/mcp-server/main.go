@@ -20,13 +20,13 @@ import (
 )
 
 type SearchMultimodalArgs struct {
-	QueryText      string `json:"query_text" jsonschema:"description=Textual query for similarity search."`
-	QueryImagePath string `json:"query_image_path" jsonschema:"description=Local path to an image file for visual similarity search."`
-	Limit          int    `json:"limit" jsonschema:"description=Maximum number of results to return (default: 5),default=5"`
+	QueryText      string `json:"query_text" jsonschema:"Textual query for similarity search."`
+	QueryImagePath string `json:"query_image_path" jsonschema:"Local path to an image file for visual similarity search."`
+	Limit          int    `json:"limit" jsonschema:"Maximum number of results to return (default: 5)."`
 }
 
 type IngestAssetArgs struct {
-	Path string `json:"path" jsonschema:"description=Local path to the file to ingest."`
+	Path string `json:"path" jsonschema:"Local path to the file to ingest."`
 }
 
 func main() {
