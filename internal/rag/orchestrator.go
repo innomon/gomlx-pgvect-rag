@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/gomlx/gomlx/types/tensor"
+	"github.com/gomlx/gomlx/pkg/core/tensors"
 	"github.com/innomon/gomlx-pgvect-rag/internal/db"
 	"github.com/innomon/gomlx-pgvect-rag/internal/embedder"
 	"github.com/innomon/gomlx-pgvect-rag/internal/gomlx_utils"
@@ -22,7 +22,7 @@ type Orchestrator struct {
 // Search retrieves relevant assets based on text or image input.
 func (o *Orchestrator) Search(ctx context.Context, text string, imagePath string, limit int) ([]db.Asset, error) {
 	// 1. Prepare Inputs
-	var imgT *tensor.Tensor
+	var imgT *tensors.Tensor
 	var tokens []uint32
 	var err error
 
@@ -33,7 +33,7 @@ func (o *Orchestrator) Search(ctx context.Context, text string, imagePath string
 		}
 	} else {
 		// Zero tensor for image [1, 896, 896, 3]
-		imgT = tensor.FromFlatDataAndDimensions(make([]float32, 896*896*3), 1, 896, 896, 3)
+		imgT = tensors.FromFlatDataAndDimensions(make([]float32, 896*896*3), 1, 896, 896, 3)
 	}
 
 	if text != "" {
@@ -63,7 +63,6 @@ func (o *Orchestrator) Search(ctx context.Context, text string, imagePath string
 // Ingest adds a new asset to the RAG store.
 func (o *Orchestrator) Ingest(ctx context.Context, path string, metadata map[string]interface{}) error {
 	// 1. Generate embedding
-	// (For now assuming image, but can be extended for text-only ingestion)
 	imgT, err := embedder.LoadImageAsTensor(path)
 	if err != nil {
 		return fmt.Errorf("failed to load file for ingestion: %w", err)

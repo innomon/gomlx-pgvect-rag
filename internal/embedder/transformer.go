@@ -1,9 +1,52 @@
 package embedder
 
 import (
-	. "github.com/gomlx/gomlx/graph"
-	"github.com/gomlx/gomlx/ml/context"
+	"fmt"
+
+	. "github.com/gomlx/gomlx/pkg/core/graph"
+	"github.com/gomlx/gomlx/pkg/ml/context"
+	"github.com/gomlx/gomlx/pkg/ml/layers"
 )
+
+// RMSNorm implements Root Mean Square Layer Normalization.
+// Gemma 3 uses this before each attention and MLP block.
+func RMSNorm(ctx *context.Context, x *Node, epsilon float64) *Node {
+	ctx = ctx.In("rms_norm")
+	// x shape: [batch, seq_len, hidden_dim]
+	
+	// 1. Calculate Mean Square: mean(x^2)
+	ms := ReduceMean(Square(x), -1)
+	
+	// 2. Normalize: x / sqrt(ms + eps)
+	invRms := Inverse(Sqrt(AddScalar(ms, epsilon)))
+	normalized := Mul(x, invRms)
+	
+	// 3. Scale with learnable weight (gamma)
+	hiddenDim := x.Shape().Dimensions[x.Rank()-1]
+	gamma := ctx.VariableWithShape("weight", []int{hiddenDim}).GetPrecomputed(x.Graph())
+	
+	return Mul(normalized, gamma)
+}
+
+// MLP (Feed-forward) block for Gemma 3.
+// Uses Gated Linear Unit (GLU) with GELU activation.
+func MLP(ctx *context.Context, x *Node, intermediateDim int) *Node {
+	ctx = ctx.In("mlp")
+	
+	// 1. Gate Projection + GELU
+	gate := layers.Dense(ctx.In("gate_proj"), x, true, intermediateDim)
+	gate = layers.GELU(gate)
+	
+	// 2. Up Projection
+	up := layers.Dense(ctx.In("up_proj"), x, true, intermediateDim)
+	
+	// 3. Element-wise product (Gated Linear Unit)
+	intermediate := Mul(gate, up)
+	
+	// 4. Down Projection (back to hidden_dim)
+	hiddenDim := x.Shape().Dimensions[x.Rank()-1]
+	return layers.Dense(ctx.In("down_proj"), intermediate, true, hiddenDim)
+}
 
 // EncoderBlock represents a single Gemma 3 transformer layer.
 func EncoderBlock(ctx *context.Context, x *Node, numHeads, numKVHeads, headDim, intermediateDim, slidingWindow int, ropeTheta float64) *Node {
@@ -37,19 +80,18 @@ func Gemma3Encoder(ctx *context.Context, x *Node) *Node {
 	slidingWindow := 512
 
 	for i := 0; i < numLayers; i++ {
-		layerCtx := ctx.In(string(rune(i)))
+		layerCtx := ctx.In(fmt.Sprintf("%d", i))
 		
-		// Alternating attention types (Every 6th layer is full attention)
-		ropeTheta := 10000.0 // Default for sliding attention
+		// Alternating attention types
+		ropeTheta := 10000.0
 		currentSlidingWindow := slidingWindow
 		if (i+1)%6 == 0 {
-			ropeTheta = 1000000.0 // Full attention theta
-			currentSlidingWindow = -1 // No window
+			ropeTheta = 1000000.0
+			currentSlidingWindow = -1
 		}
 
 		x = EncoderBlock(layerCtx, x, numHeads, numKVHeads, headDim, intermediateDim, currentSlidingWindow, ropeTheta)
 	}
 
-	// Final Layer Norm
 	return RMSNorm(ctx.In("final_norm"), x, 1e-6)
 }

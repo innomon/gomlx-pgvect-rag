@@ -9,9 +9,9 @@ import (
 
 	"github.com/gomlx/gomlx/backends"
 	_ "github.com/gomlx/gomlx/backends/xla"
-	"github.com/gomlx/gomlx/graph"
-	"github.com/gomlx/gomlx/ml/context"
-	"github.com/gomlx/gomlx/types/tensor"
+	"github.com/gomlx/gomlx/pkg/core/graph"
+	"github.com/gomlx/gomlx/pkg/core/tensors"
+	"github.com/gomlx/gomlx/pkg/ml/context"
 	"github.com/nlpodyssey/safetensors"
 )
 
@@ -52,14 +52,13 @@ func (m *Model) CompileEmbed(buildFn func(ctx *context.Context, textIds, imagePi
 }
 
 // Embed executes the compiled GoMLX graph.
-func (m *Model) Embed(textIds []uint32, imageTensor *tensor.Tensor) ([]float32, error) {
+func (m *Model) Embed(textIds []uint32, imageTensor *tensors.Tensor) ([]float32, error) {
 	if m.ExecEmbed == nil {
 		return nil, fmt.Errorf("embedding graph not compiled")
 	}
 
 	// 1. Create Text ID tensor: [batch=1, seq_len]
-	// Use uint32 for vocabulary IDs
-	textT := tensor.FromFlatDataAndDimensions(textIds, 1, len(textIds))
+	textT := tensors.FromFlatDataAndDimensions(textIds, 1, len(textIds))
 
 	// 2. Run inference
 	results := m.ExecEmbed.Call(textT, imageTensor)
@@ -68,7 +67,6 @@ func (m *Model) Embed(textIds []uint32, imageTensor *tensor.Tensor) ([]float32, 
 	}
 
 	// 3. Convert output tensor to []float32
-	// Expecting shape [1, 640]
 	outT := results[0]
 	return outT.FlatData().([]float32), nil
 }
@@ -91,36 +89,29 @@ func (m *Model) LoadSafetensors(weightsDir string) error {
 			return fmt.Errorf("failed to open safetensors file %s: %w", file, err)
 		}
 
-		// Iterate through each tensor in the file
 		for _, name := range st.Names() {
 			t, err := st.Tensor(name)
 			if err != nil {
 				return fmt.Errorf("failed to read tensor %s: %w", name, err)
 			}
 
-			// Map Safetensors name to GoMLX context scope
 			gomlxScope := mapHuggingFaceToGoMLX(name)
-
-			// Safetensors data is typically little-endian raw bytes
 			data := t.Data()
 			shape := make([]int, len(t.Shape()))
 			for i, s := range t.Shape() {
 				shape[i] = int(s)
 			}
 
-			var goMLXTensor *tensor.Tensor
+			var goMLXTensor *tensors.Tensor
 			switch t.Dtype() {
 			case safetensors.Float32:
 				floatData := *(*[]float32)(unsafe.Pointer(&data))
-				// Take sub-slice because the slice header capacity might be different
 				floatData = floatData[:len(data)/4]
-				goMLXTensor = tensor.FromFlatDataAndDimensions(floatData, shape...)
+				goMLXTensor = tensors.FromFlatDataAndDimensions(floatData, shape...)
 			default:
-				// Skip unsupported types for now (bfloat16 needs conversion)
 				continue
 			}
 
-			// Store in context at the mapped scope
 			m.Context.In(gomlxScope).SetVariableValue(goMLXTensor)
 		}
 	}
@@ -131,8 +122,6 @@ func (m *Model) LoadSafetensors(weightsDir string) error {
 // mapHuggingFaceToGoMLX converts dot-separated HF names to GoMLX's slash-separated scopes.
 func mapHuggingFaceToGoMLX(hfName string) string {
 	name := strings.ReplaceAll(hfName, ".", "/")
-	name = strings.ReplaceAll(name, "model/layers/", "layer_")
-	name = strings.HasPrefix(name, "model/")
 	if strings.HasPrefix(hfName, "model.") {
 		name = "/" + name[6:]
 	} else if !strings.HasPrefix(hfName, "/") {

@@ -6,12 +6,18 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/innomon/gomlx-pgvect-rag/internal/db"
+	"github.com/innomon/gomlx-pgvect-rag/internal/embedder"
 	"github.com/innomon/gomlx-pgvect-rag/internal/gomlx_utils"
 	"github.com/innomon/gomlx-pgvect-rag/internal/rag"
+	"github.com/innomon/gomlx-pgvect-rag/pkg/utils"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+
+	// Register XLA backend
+	_ "github.com/gomlx/gomlx/backends/xla"
 )
 
 func main() {
@@ -40,10 +46,13 @@ func main() {
 	}
 
 	// 3. Initialize Tokenizer
-	tokenizerPath := filepath.Join(weightsDir, "tokenizer.json")
-	tk, err := utils.NewTokenizer(tokenizerPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  Failed to load tokenizer from %s: %v\n", tokenizerPath, err)
+	var tk *utils.Tokenizer
+	if weightsDir != "" {
+		tokenizerPath := filepath.Join(weightsDir, "tokenizer.json")
+		tk, err = utils.NewTokenizer(tokenizerPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  Failed to load tokenizer from %s: %v\n", tokenizerPath, err)
+		}
 	}
 
 	// 4. Initialize Database Connection
@@ -61,13 +70,13 @@ func main() {
 		Tokenizer: tk,
 	}
 
-	// 4. Create MCP Server
+	// 6. Create MCP Server
 	s := server.NewMCPServer(
 		"gomlx-pgvect-rag",
 		"1.0.0",
 	)
 
-	// 5. Register Tools
+	// 7. Register Tools
 	// search_multimodal
 	searchTool := mcp.NewTool("search_multimodal",
 		mcp.WithDescription("Search for relevant text or image assets in the multimodal RAG store."),
@@ -90,7 +99,6 @@ func main() {
 			return mcp.NewToolResultError(fmt.Sprintf("Search failed: %v", err)), nil
 		}
 
-		// Convert assets to JSON response
 		return mcp.NewToolResultText(fmt.Sprintf("Found %d results: %+v", len(assets), assets)), nil
 	})
 
@@ -99,12 +107,10 @@ func main() {
 		mcp.WithDescription("Ingest a new file (image or text) into the multimodal RAG store."),
 		mcp.WithSchema(mcp.NewParams(
 			mcp.NewStringParam("path", "Local path to the file to ingest."),
-			mcp.NewStringParam("metadata", "JSON string containing metadata for the asset."),
 		)),
 	)
 	s.AddTool(ingestTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path, _ := request.Params["path"].(string)
-		// Simplified metadata handling for now
 		err := orchestrator.Ingest(ctx, path, map[string]interface{}{"source": "mcp-tool"})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Ingestion failed: %v", err)), nil
@@ -113,7 +119,7 @@ func main() {
 		return mcp.NewToolResultText(fmt.Sprintf("Successfully ingested: %s", path)), nil
 	})
 
-	// 6. Start the MCP Server (stdio)
+	// 8. Start the MCP Server (stdio)
 	fmt.Fprintf(os.Stderr, "🚀 gomlx-pgvect-rag MCP Server running on %s\n", backend.Name())
 	if err := server.ServeStdio(s); err != nil {
 		log.Fatalf("MCP server error: %v", err)
