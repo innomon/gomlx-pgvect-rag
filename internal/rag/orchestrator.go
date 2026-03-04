@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/gomlx/gomlx/types/tensor"
 	"github.com/innomon/gomlx-pgvect-rag/internal/db"
 	"github.com/innomon/gomlx-pgvect-rag/internal/embedder"
 	"github.com/innomon/gomlx-pgvect-rag/internal/gomlx_utils"
@@ -20,31 +21,37 @@ type Orchestrator struct {
 
 // Search retrieves relevant assets based on text or image input.
 func (o *Orchestrator) Search(ctx context.Context, text string, imagePath string, limit int) ([]db.Asset, error) {
-	var queryVec []float32
+	// 1. Prepare Inputs
+	var imgT *tensor.Tensor
+	var tokens []uint32
 	var err error
 
-	// 1. Generate Embedding
 	if imagePath != "" {
-		imgTensor, err := embedder.LoadImageAsTensor(imagePath)
+		imgT, err = embedder.LoadImageAsTensor(imagePath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load image for search: %w", err)
+			return nil, err
 		}
-		// queryVec = o.Model.EmbedImage(imgTensor)
-		queryVec = make([]float32, 640) // Dimension matching Gemma 2 hidden_size
-		_ = imgTensor
-	} else if text != "" {
-		tokens, err := o.Tokenizer.Encode(text, true)
-		if err != nil {
-			return nil, fmt.Errorf("failed to tokenize query: %w", err)
-		}
-		// queryVec = o.Model.EmbedText(tokens)
-		queryVec = make([]float32, 640)
-		_ = tokens
 	} else {
-		return nil, fmt.Errorf("either text or imagePath must be provided")
+		// Zero tensor for image [1, 896, 896, 3]
+		imgT = tensor.FromFlatDataAndDimensions(make([]float32, 896*896*3), 1, 896, 896, 3)
 	}
 
-	// 2. Query Vector DB
+	if text != "" {
+		tokens, err = o.Tokenizer.Encode(text, true)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		tokens = []uint32{0} // Single pad/empty token
+	}
+
+	// 2. Generate Embedding via GoMLX
+	queryVec, err := o.Model.Embed(tokens, imgT)
+	if err != nil {
+		return nil, fmt.Errorf("embedding generation failed: %w", err)
+	}
+
+	// 3. Query Vector DB
 	results, err := db.SearchSimilar(ctx, o.DB, queryVec, limit)
 	if err != nil {
 		return nil, fmt.Errorf("search failed: %w", err)
@@ -55,15 +62,24 @@ func (o *Orchestrator) Search(ctx context.Context, text string, imagePath string
 
 // Ingest adds a new asset to the RAG store.
 func (o *Orchestrator) Ingest(ctx context.Context, path string, metadata map[string]interface{}) error {
-	// 1. Load file
-	// 2. Generate Embedding via GoMLX
-	// 3. Upsert into DB
+	// 1. Generate embedding
+	// (For now assuming image, but can be extended for text-only ingestion)
+	imgT, err := embedder.LoadImageAsTensor(path)
+	if err != nil {
+		return fmt.Errorf("failed to load file for ingestion: %w", err)
+	}
 	
-	// Mock implementation for flow verification:
+	tokens := []uint32{0}
+	vec, err := o.Model.Embed(tokens, imgT)
+	if err != nil {
+		return fmt.Errorf("failed to generate embedding for ingestion: %w", err)
+	}
+
+	// 2. Upsert into DB
 	asset := db.Asset{
 		Path:      path,
 		Metadata:  metadata,
-		Embedding: make([]float32, 1152),
+		Embedding: vec,
 	}
 	
 	return db.UpsertAsset(ctx, o.DB, asset)

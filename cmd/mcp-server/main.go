@@ -32,11 +32,21 @@ func main() {
 		if err := model.LoadSafetensors(weightsDir); err != nil {
 			log.Fatalf("Failed to load weights: %v", err)
 		}
+		// Compile the graph once weights are loaded
+		fmt.Fprintf(os.Stderr, "🛠️  Compiling GoMLX graph...\n")
+		model.CompileEmbed(embedder.EmbedMultimodalGraph)
 	} else {
 		fmt.Fprintf(os.Stderr, "⚠️  No weights directory provided. Embeddings will be stubs.\n")
 	}
 
-	// 3. Initialize Database Connection
+	// 3. Initialize Tokenizer
+	tokenizerPath := filepath.Join(weightsDir, "tokenizer.json")
+	tk, err := utils.NewTokenizer(tokenizerPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  Failed to load tokenizer from %s: %v\n", tokenizerPath, err)
+	}
+
+	// 4. Initialize Database Connection
 	ctx := context.Background()
 	pool, err := db.Connect(ctx)
 	if err != nil {
@@ -44,10 +54,11 @@ func main() {
 	}
 	defer pool.Close()
 
-	// 4. Initialize Orchestrator
+	// 5. Initialize Orchestrator
 	orchestrator := &rag.Orchestrator{
-		DB:    pool,
-		Model: model,
+		DB:        pool,
+		Model:     model,
+		Tokenizer: tk,
 	}
 
 	// 4. Create MCP Server

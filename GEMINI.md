@@ -9,9 +9,10 @@ A Multimodal Retrieval-Augmented Generation (RAG) system built with:
 - **MCP Server** [Official go MCP SDK](https://github.com/modelcontextprotocol/go-sdk)
 - **Vector Database:** PostgreSQL with [pgvector](https://github.com/pgvector/pgvector)
 - **Models:** T5Gemma 2 (Multimodal Encoder-Decoder)
-  - **Encoder:** SigLIP Vision Encoder + T5 Encoder
-  - **Decoder:** Gemma 2 for generation
-  - **Embedding Dimension:** 1152 (for 270M variant)
+  - **Foundation:** Based on **Gemma 3** architecture (UL2 adaptation).
+  - **Encoder:** SigLIP Vision Encoder (1152-dim) + Gemma 3 Text Encoder (640-dim).
+  - **Decoder:** Gemma 3 for generation.
+  - **Embedding Dimension:** 640 (based on Gemma 3 text encoder hidden size).
 
 ## Engineering Standards
 - **Go Conventions:** Standard directory structure (`cmd/`, `internal/`, `pkg/`).

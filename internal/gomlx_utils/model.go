@@ -9,6 +9,7 @@ import (
 
 	"github.com/gomlx/gomlx/backends"
 	_ "github.com/gomlx/gomlx/backends/xla"
+	"github.com/gomlx/gomlx/graph"
 	"github.com/gomlx/gomlx/ml/context"
 	"github.com/gomlx/gomlx/types/tensor"
 	"github.com/nlpodyssey/safetensors"
@@ -30,8 +31,9 @@ func InitializeBackend() (backends.Backend, error) {
 
 // Model represents the T5Gemma 2 model context and weights.
 type Model struct {
-	Backend backends.Backend
-	Context *context.Context
+	Backend   backends.Backend
+	Context   *context.Context
+	ExecEmbed *graph.Exec
 }
 
 // NewModel initializes the GoMLX context.
@@ -40,6 +42,35 @@ func NewModel(backend backends.Backend) *Model {
 		Backend: backend,
 		Context: context.New(),
 	}
+}
+
+// CompileEmbed compiles the multimodal embedding graph for inference.
+func (m *Model) CompileEmbed(buildFn func(ctx *context.Context, textIds, imagePixels *graph.Node) *graph.Node) {
+	m.ExecEmbed = graph.NewExec(m.Backend, func(textIds, imagePixels *graph.Node) *graph.Node {
+		return buildFn(m.Context, textIds, imagePixels)
+	})
+}
+
+// Embed executes the compiled GoMLX graph.
+func (m *Model) Embed(textIds []uint32, imageTensor *tensor.Tensor) ([]float32, error) {
+	if m.ExecEmbed == nil {
+		return nil, fmt.Errorf("embedding graph not compiled")
+	}
+
+	// 1. Create Text ID tensor: [batch=1, seq_len]
+	// Use uint32 for vocabulary IDs
+	textT := tensor.FromFlatDataAndDimensions(textIds, 1, len(textIds))
+
+	// 2. Run inference
+	results := m.ExecEmbed.Call(textT, imageTensor)
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no output from graph execution")
+	}
+
+	// 3. Convert output tensor to []float32
+	// Expecting shape [1, 640]
+	outT := results[0]
+	return outT.FlatData().([]float32), nil
 }
 
 // LoadSafetensors loads one or more .safetensors files into the model's context.
@@ -85,7 +116,7 @@ func (m *Model) LoadSafetensors(weightsDir string) error {
 				floatData = floatData[:len(data)/4]
 				goMLXTensor = tensor.FromFlatDataAndDimensions(floatData, shape...)
 			default:
-				fmt.Printf("⚠️  Skipping tensor %s: unsupported dtype %v\n", name, t.Dtype())
+				// Skip unsupported types for now (bfloat16 needs conversion)
 				continue
 			}
 
@@ -101,12 +132,10 @@ func (m *Model) LoadSafetensors(weightsDir string) error {
 func mapHuggingFaceToGoMLX(hfName string) string {
 	name := strings.ReplaceAll(hfName, ".", "/")
 	name = strings.ReplaceAll(name, "model/layers/", "layer_")
-	name = strings.ReplaceAll(name, "self_attn/q_proj", "attention/query")
-	name = strings.ReplaceAll(name, "self_attn/k_proj", "attention/key")
-	name = strings.ReplaceAll(name, "self_attn/v_proj", "attention/value")
-	name = strings.ReplaceAll(name, "self_attn/o_proj", "attention/output")
-
-	if !strings.HasPrefix(name, "/") {
+	name = strings.HasPrefix(name, "model/")
+	if strings.HasPrefix(hfName, "model.") {
+		name = "/" + name[6:]
+	} else if !strings.HasPrefix(hfName, "/") {
 		name = "/" + name
 	}
 	return name
